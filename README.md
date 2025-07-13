@@ -47,9 +47,6 @@ cd pharma_research_extractor
 
 # Install dependencies
 poetry install
-
-# Activate the virtual environment
-poetry shell
 ```
 
 #### Using pip
@@ -58,9 +55,6 @@ poetry shell
 # Clone the repository
 git clone <your-repo-url>
 cd pharma_research_extractor
-
-# Install dependencies
-pip install -r requirements.txt
 
 # Install in development mode
 pip install -e .
@@ -116,10 +110,10 @@ get-papers-list "your search query" [OPTIONS]
 get-papers-list "acne AND pharmaceutical"
 
 # Search with custom output file and format
-get-papers-list "diabetes drug development" --output diabetes_research.csv --format csv
+get-papers-list "diabetes drug development" --file diabetes_research.csv --format csv
 
 # JSON output format
-get-papers-list "cancer immunotherapy" --output results.json --format json
+get-papers-list "cancer immunotherapy" --file results.json --format json
 
 # Enable debug mode for detailed logging
 get-papers-list "alzheimer drug" --debug
@@ -133,7 +127,7 @@ get-papers-list "covid vaccine" --max-results 20
 | Option | Description | Default |
 |--------|-------------|---------|
 | `query` | PubMed search query (required) | - |
-| `--output` | Output filename | `output.csv` |
+| `--file` | Output filename | `output.csv` |
 | `--format` | Output format: `csv` or `json` | `csv` |
 | `--max-results` | Maximum number of results | `50` |
 | `--debug` | Enable debug logging | `False` |
