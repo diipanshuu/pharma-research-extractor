@@ -1,13 +1,13 @@
 [project]
 name = "pharma-research-extractor"
-version = "0.1.1"
+version = "0.1.2"
 description = "Extract pharmaceutical research papers with industry affiliations from PubMed"
 authors = [
     {name = "diipanshuu",email = "diipanshuu@gmail.com"}
 ]
 license = "MIT"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.8"
 dependencies = [
     "requests>=2.31.0,<3.0.0",
     "typer>=0.16.0,<0.17.0",
@@ -19,9 +19,6 @@ get-papers-list = "pharma_research_extractor.cli:run_cli"
 
 [tool.poetry]
 packages = [{include = "pharma_research_extractor", from = "src"}]
-
-[tool.poetry.scripts]
-get-papers-list = "pharma_research_extractor.cli:run_cli"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
