@@ -1,153 +1,137 @@
-from typing import Optional, List
+"""
+Pharma Research Extractor - CLI Module
+
+This module provides a command-line interface for searching PubMed publications
+and extracting papers with non-academic (industry/company) affiliations.
+
+The tool uses PubMed's E-utilities API to efficiently search and retrieve
+publication data, then filters results to identify industry-sponsored research.
+"""
+
+from typing import Optional
 import typer
 from rich import print
 from rich.console import Console
-import requests
-import xml.etree.ElementTree as ET
-import csv
-import sys
 
+from .pubmed_client import PubMedClient
+from .output import OutputWriter
+from .config import DEFAULT_FETCH_LIMIT
+from .exceptions import (
+    PubMedAPIError, NetworkError, DataProcessingError, 
+    OutputError, ValidationError
+)
+from .validation import InputValidator
+
+# Initialize console for rich text output
 console = Console()
-app = typer.Typer()
-
-ACADEMIC_KEYWORDS = [
-    "school", "university", "college", "institute", "department", "faculty",
-    "academy", "center", "centre", "hospital", "medical", "clinic", "grad",
-    "postdoc", "fellow", "professor", "lecturer", "phd", "student", "library",
-    "conservatory", "polytechnic", "laboratory", "lab"
-]
-
-def is_academic_affiliation(affil: str) -> bool:
-    affil = affil.lower()
-    return any(keyword in affil for keyword in ACADEMIC_KEYWORDS)
-
-def extract_email(affil_text: str) -> str:
-    if not affil_text:
-        return ""
-    for word in affil_text.split():
-        if "@" in word and "." in word:
-            return word.strip(";.,()<>")
-    return ""
-
-def search_pubmed(query: str, retmax: int = 20) -> tuple[str, str]:
-    try:
-        params = {
-            "db": "pubmed",
-            "term": query,
-            "retmode": "xml",
-            "usehistory": "y",
-            "retmax": retmax
-        }
-        response = requests.get("https://eutils.ncbi.nlm.nih.gov/eutils/esearch.fcgi", params=params)
-        response.raise_for_status()
-        root = ET.fromstring(response.text)
-        query_key = root.findtext("QueryKey")
-        webenv = root.findtext("WebEnv")
-        if not query_key or not webenv:
-            raise ValueError("Missing QueryKey or WebEnv in response.")
-        return query_key, webenv
-    except Exception as e:
-        console.print(f"[red]Error during PubMed search:[/red] {e}")
-        raise
-
-def fetch_pubmed_details(query_key: str, webenv: str, retstart: int = 0, retmax: int = 20) -> List[dict]:
-    try:
-        params = {
-            "db": "pubmed",
-            "query_key": query_key,
-            "WebEnv": webenv,
-            "retstart": retstart,
-            "retmax": retmax,
-            "retmode": "xml"
-        }
-        response = requests.get("https://eutils.ncbi.nlm.nih.gov/eutils/efetch.fcgi", params=params)
-        response.raise_for_status()
-        return parse_pubmed_xml(response.text)
-    except Exception as e:
-        console.print(f"[red]Error fetching article details:[/red] {e}")
-        raise
-
-def parse_pubmed_xml(xml_text: str) -> List[dict]:
-    root = ET.fromstring(xml_text)
-    results = []
-
-    for article in root.findall(".//PubmedArticle"):
-        pmid = article.findtext(".//PMID") or "N/A"
-        title = article.findtext(".//ArticleTitle") or "N/A"
-
-        pub_date_elem = article.find(".//PubDate")
-        year = pub_date_elem.findtext("Year") or ""
-        month = pub_date_elem.findtext("Month") or ""
-        day = pub_date_elem.findtext("Day") or ""
-        pub_date = f"{year}-{month}-{day}".strip("-")
-
-        non_academic_authors = []
-        affiliations = []
-        corresponding_email = ""
-
-        for author in article.findall(".//Author"):
-            fore = author.findtext("ForeName") or ""
-            last = author.findtext("LastName") or ""
-            full_name = f"{fore} {last}".strip()
-
-            affil_elem = author.find(".//AffiliationInfo/Affiliation")
-            affil = affil_elem.text.strip() if affil_elem is not None else ""
-
-            if affil:
-                email = extract_email(affil)
-                if not corresponding_email and email:
-                    corresponding_email = email
-
-            if affil and not is_academic_affiliation(affil):
-                non_academic_authors.append(full_name)
-                affiliations.append(affil)
-
-        if non_academic_authors:
-            results.append({
-                "PubmedID": pmid,
-                "Title": title,
-                "Publication Date": pub_date,
-                "Non-academicAuthor(s)": "; ".join(non_academic_authors),
-                "CompanyAffiliation(s)": "; ".join(affiliations),
-                "Corresponding Author Email": corresponding_email
-            })
-
-    return results
-
-def write_to_csv(results: List[dict], filename: str) -> None:
-    try:
-        if not results:
-            console.print("[yellow]No non-academic papers found.[/yellow]")
-            return
-
-        fieldnames = [
-            "PubmedID", "Title", "Publication Date",
-            "Non-academicAuthor(s)", "CompanyAffiliation(s)", "Corresponding Author Email"
-        ]
-        with open(filename, "w", newline='', encoding="utf-8") as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(results)
-
-        console.print(f"[green]✅ Results saved to '{filename}'[/green]")
-    except Exception as e:
-        console.print(f"[red]Error writing to CSV:[/red] {e}")
-        raise
+app = typer.Typer(help="Extract pharmaceutical industry research from PubMed")
 
 def run_cli():
+    """Entry point for the CLI when installed as a package."""
     typer.run(main)
+
+
 def main(
     query: str = typer.Argument(..., help="PubMed search query."),
     file: str = typer.Option(default="output.csv", help="Output CSV file name.", show_default=True),
-    debug: bool = typer.Option(default=False, help="Enable debug logging.")
+    debug: bool = typer.Option(default=False, help="Enable debug logging."),
+    format: str = typer.Option(default="csv", help="Output format: csv or json", show_default=True)
 ):
+    """
+    Search PubMed for pharmaceutical industry research publications.
+    
+    This tool searches PubMed using your query and extracts publications
+    that have authors affiliated with non-academic institutions (companies,
+    pharmaceutical firms, biotech organizations, etc.).
+    
+    Args:
+        query: PubMed search query (e.g., "acne AND drug development")
+        file: Output file name (default: output.csv)
+        debug: Enable detailed logging for troubleshooting
+        format: Output format - csv or json (default: csv)
+        
+    Examples:
+        get-papers-list "acne AND pharmaceutical"
+        get-papers-list "diabetes drug" --file diabetes.csv --debug
+        get-papers-list "cancer research" --format json --file results.json
+        
+    Returns:
+        Exits with code 0 on success, 1 on failure
+    """
     if debug:
         console.log(f"[bold cyan]Running query:[/bold cyan] {query}")
+        console.log(f"[bold cyan]Output format:[/bold cyan] {format}")
+    
     try:
-        query_key, webenv = search_pubmed(query)
-        results = fetch_pubmed_details(query_key, webenv, retmax=50)
-        write_to_csv(results, file)
+        # Validate inputs
+        query = InputValidator.validate_query(query)
+        filename = InputValidator.validate_filename(file)
+        output_format = InputValidator.validate_format(format)
+        
+        if debug:
+            console.log(f"[dim]Validated inputs: query='{query[:50]}...', file='{filename}', format='{output_format}'[/dim]")
+        
+        # Initialize PubMed client
+        client = PubMedClient()
+        
+        # Step 1: Search PubMed and get session identifiers
+        console.print("[blue]🔍 Searching PubMed...[/blue]")
+        query_key, webenv = client.search(query)
+        
+        if debug:
+            console.log(f"[cyan]Query Key: {query_key}, WebEnv: {webenv[:20]}...[/cyan]")
+        
+        # Step 2: Fetch detailed article information
+        console.print("[blue]📥 Fetching article details...[/blue]")
+        results = client.fetch_details(query_key, webenv, retmax=DEFAULT_FETCH_LIMIT)
+        
+        if debug:
+            console.log(f"[cyan]Found {len(results)} papers with industry affiliations[/cyan]")
+        
+        # Step 3: Write results to specified format
+        console.print("[blue]💾 Writing results...[/blue]")
+        if output_format == "json":
+            OutputWriter.write_json(results, filename)
+        else:
+            OutputWriter.write_csv(results, filename)
+        
+        # Success message
+        console.print(f"[green]🎉 Successfully processed query: '{query}'[/green]")
+        
+    except ValidationError as e:
+        console.print(f"[bold red]❌ Input Validation Error:[/bold red] {e}")
+        console.print("[yellow]💡 Tip: Check your query syntax and output filename[/yellow]")
+        raise typer.Exit(code=2)  # Different exit code for validation errors
+        
+    except NetworkError as e:
+        console.print(f"[bold red]❌ Network Error:[/bold red] {e}")
+        console.print("[yellow]💡 Tip: Check your internet connection and try again[/yellow]")
+        raise typer.Exit(code=3)  # Different exit code for network errors
+        
+    except PubMedAPIError as e:
+        console.print(f"[bold red]❌ PubMed API Error:[/bold red] {e}")
+        console.print("[yellow]💡 Tip: Try a different search query or check PubMed status[/yellow]")
+        raise typer.Exit(code=4)  # Different exit code for API errors
+        
+    except DataProcessingError as e:
+        console.print(f"[bold red]❌ Data Processing Error:[/bold red] {e}")
+        console.print("[yellow]💡 Tip: This might be a temporary issue with data format[/yellow]")
+        raise typer.Exit(code=5)  # Different exit code for processing errors
+        
+    except OutputError as e:
+        console.print(f"[bold red]❌ Output Error:[/bold red] {e}")
+        console.print("[yellow]💡 Tip: Check file permissions and available disk space[/yellow]")
+        raise typer.Exit(code=6)  # Different exit code for output errors
+        
+    except KeyboardInterrupt:
+        console.print("\n[yellow]⚠️ Operation cancelled by user[/yellow]")
+        raise typer.Exit(code=130)  # Standard exit code for SIGINT
+        
     except Exception as e:
-        console.print(f"[bold red]❌ Failed:[/bold red] {e}")
-        raise typer.Exit(code=1)
+        console.print(f"[bold red]❌ Unexpected Error:[/bold red] {e}")
+        console.print("[yellow]💡 This is an unexpected error. Please report this issue.[/yellow]")
+        if debug:
+            import traceback
+            console.print(f"[red]Traceback:[/red] {traceback.format_exc()}")
+        raise typer.Exit(code=1)  # General error code
 

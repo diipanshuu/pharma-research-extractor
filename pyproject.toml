@@ -1,6 +1,6 @@
 [project]
 name = "pharma-research-extractor"
-version = "0.1.0"
+version = "0.1.1"
 description = ""
 authors = [
     {name = "diipanshuu",email = "diipanshuu@gmail.com"}
@@ -9,9 +9,9 @@ license = "MIT"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "requests (>=2.32.4,<3.0.0)",
-    "typer (>=0.16.0,<0.17.0)",
-    "rich (>=14.0.0,<15.0.0)"
+    "requests>=2.31.0,<3.0.0",
+    "typer>=0.16.0,<0.17.0",
+    "rich>=14.0.0,<15.0.0"
 ]
 
 [tool.poetry]
